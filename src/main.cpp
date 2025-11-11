@@ -1,76 +1,724 @@
-// wxWidgets "Hello World" Program available on https://docs.wxwidgets.org/trunk/overview_helloworld.html
-
-// For compilers that support precompilation, includes "wx/wx.h".
+// 现代 TV 菜单风格的 wxWidgets 界面
 #include <wx/wxprec.h>
 #ifndef WX_PRECOMP
     #include <wx/wx.h>
 #endif
+#include <wx/graphics.h>
+#include <wx/dcbuffer.h>
+#include <vector>
+#include <map>
 
-class MyApp : public wxApp 
+namespace Theme {
+    const wxColour Background = wxColour(3, 54, 75);       
+    const wxColour CardNormal = wxColour(30, 30, 35);     
+    const wxColour CardHover = wxColour(45, 45, 50);     
+    const wxColour Primary1 = wxColour(0, 150, 200);      
+    const wxColour Primary2 = wxColour(0, 100, 180);      
+    const wxColour TextNormal = wxColour(200, 200, 200); 
+    const wxColour TextSelected = wxColour(255, 255, 255);   
+    const wxColour CheckMark = wxColour(0, 200, 100);        
+}
+
+enum class Language {
+    English,
+    Chinese,
+    // Spanish,
+    // Japanese,
+    // etc.
+};
+
+class LanguageManager {
+public:
+    static LanguageManager& Instance() {
+        static LanguageManager instance;
+        return instance;
+    }
+    
+    void SetLanguage(Language lang) {
+        m_currentLanguage = lang;
+    }
+    
+    Language GetLanguage() const {
+        return m_currentLanguage;
+    }
+    
+    wxString GetText(const wxString& key) const {
+        auto it = m_translations.find(key);
+        if (it != m_translations.end()) {
+            switch (m_currentLanguage) {
+                case Language::Chinese:
+                    return it->second.chinese;
+                case Language::English:
+                default:
+                    return it->second.english;
+            }
+        }
+        return key;
+    }
+    
+private:
+    LanguageManager() : m_currentLanguage(Language::English) {
+        InitializeTranslations();
+    }
+    
+    struct Translation {
+        wxString english;
+        wxString chinese;
+        // wxString spanish;
+        // wxString japanese;
+    };
+    
+    void InitializeTranslations() {
+        // Tab 标签
+        m_translations["tab_source"] = {"Source", wxString::FromUTF8("信号源")};
+        m_translations["tab_picture"] = {"Picture", wxString::FromUTF8("图像")};
+        m_translations["tab_sound"] = {"Sound", wxString::FromUTF8("声音")};
+        m_translations["tab_channel"] = {"Channel", wxString::FromUTF8("频道")};
+        m_translations["tab_common"] = {"Common", wxString::FromUTF8("通用")};
+        
+        // Source 页面
+        m_translations["source_dtv"] = {"DTV", wxString::FromUTF8("数字电视")};
+        m_translations["source_atv"] = {"ATV", wxString::FromUTF8("模拟电视")};
+        m_translations["source_av"] = {"AV", wxString::FromUTF8("AV输入")};
+        m_translations["source_hdmi1"] = {"HDMI1", "HDMI1"};
+        m_translations["source_hdmi2"] = {"HDMI2", "HDMI2"};
+        
+        // Picture 页面
+        m_translations["picture_standard"] = {"Standard", wxString::FromUTF8("标准")};
+        m_translations["picture_dynamic"] = {"Dynamic", wxString::FromUTF8("动态")};
+        m_translations["picture_movie"] = {"Movie", wxString::FromUTF8("电影")};
+        m_translations["picture_game"] = {"Game", wxString::FromUTF8("游戏")};
+        
+        // Sound 页面
+        m_translations["sound_standard"] = {"Standard", wxString::FromUTF8("标准")};
+        m_translations["sound_music"] = {"Music", wxString::FromUTF8("音乐")};
+        m_translations["sound_movie"] = {"Movie", wxString::FromUTF8("电影")};
+        m_translations["sound_sports"] = {"Sports", wxString::FromUTF8("体育")};
+        
+        // Channel 页面
+        m_translations["channel_auto"] = {"Auto Scan", wxString::FromUTF8("自动搜台")};
+        m_translations["channel_manual"] = {"Manual Scan", wxString::FromUTF8("手动搜台")};
+        m_translations["channel_list"] = {"Channel List", wxString::FromUTF8("频道列表")};
+        
+        // Common 页面
+        m_translations["common_language"] = {"Language", wxString::FromUTF8("语言")};
+        m_translations["common_time"] = {"Time", wxString::FromUTF8("时间")};
+        m_translations["common_network"] = {"Network", wxString::FromUTF8("网络")};
+        m_translations["common_about"] = {"About", wxString::FromUTF8("关于")};
+        
+        // 窗口标题
+        m_translations["window_title"] = {"TV Menu Demo", wxString::FromUTF8("电视菜单演示")};
+    }
+    
+    Language m_currentLanguage;
+    std::map<wxString, Translation> m_translations;
+};
+
+#define TR(key) LanguageManager::Instance().GetText(key)
+
+wxDECLARE_EVENT(wxEVT_TILE_CLICKED, wxCommandEvent);
+wxDEFINE_EVENT(wxEVT_TILE_CLICKED, wxCommandEvent);
+
+wxDECLARE_EVENT(wxEVT_TAB_CHANGED, wxCommandEvent);
+wxDEFINE_EVENT(wxEVT_TAB_CHANGED, wxCommandEvent);
+
+
+class TileButton : public wxPanel
 {
 public:
-    virtual bool OnInit(); 
-}; 
+    TileButton(wxWindow* parent, wxWindowID id, const wxString& textKey)
+        : wxPanel(parent, id, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
+        , m_textKey(textKey)
+        , m_selected(false)
+        , m_hover(false)
+    {
+        SetBackgroundStyle(wxBG_STYLE_PAINT); 
+        SetMinSize(wxSize(150, 60));
+        SetMaxSize(wxSize(150, 60));
+        
+        // 绑定事件
+        Bind(wxEVT_PAINT, &TileButton::OnPaint, this);
+        Bind(wxEVT_LEFT_DOWN, &TileButton::OnClick, this);
+        Bind(wxEVT_ENTER_WINDOW, &TileButton::OnMouseEnter, this);
+        Bind(wxEVT_LEAVE_WINDOW, &TileButton::OnMouseLeave, this);
+    }
+    
+    void SetSelected(bool selected) 
+    { 
+        if (m_selected != selected) {
+            m_selected = selected;
+            Refresh();
+        }
+    }
+    
+    void UpdateLanguage() {
+        Refresh();  // 重绘以显示新语言
+    }
+    
+    bool IsSelected() const { return m_selected; }
+    wxString GetTextKey() const { return m_textKey; }
+
+private:
+    wxString m_textKey;  // 存储文本键而不是直接文本
+    wxString m_icon;
+    bool m_selected;
+    bool m_hover;
+    
+    void OnPaint(wxPaintEvent& evt)
+    {
+        wxAutoBufferedPaintDC dc(this);
+        wxGraphicsContext* gc = wxGraphicsContext::Create(dc);
+        if (!gc) return;
+        
+        wxSize size = GetClientSize();
+        
+        gc->SetBrush(wxBrush(Theme::Background));
+        gc->SetPen(*wxTRANSPARENT_PEN);
+        gc->DrawRectangle(0, 0, size.x, size.y);
+        
+        double margin = 8;
+        double x = margin;
+        double y = margin;
+        double w = size.x - 2 * margin;
+        double h = size.y - 2 * margin;
+        double radius = 8;
+        
+        if (m_selected) {
+            wxGraphicsGradientStops stops(Theme::Primary1, Theme::Primary2);
+            wxGraphicsBrush brush = gc->CreateLinearGradientBrush(
+                x, y, x, y + h, stops);
+            gc->SetBrush(brush);
+        } else if (m_hover) {
+            gc->SetBrush(wxBrush(Theme::CardHover));
+        } else {
+            gc->SetBrush(wxBrush(Theme::CardNormal));
+        }
+        
+        gc->SetPen(*wxTRANSPARENT_PEN);
+        gc->DrawRoundedRectangle(x, y, w, h, radius);
+        
+        if (m_selected) {
+            double checkSize = 20;
+            double checkX = x + w - checkSize - 8;
+            double checkY = y + 8;
+            
+            gc->SetBrush(wxBrush(Theme::CheckMark));
+            gc->DrawEllipse(checkX, checkY, checkSize, checkSize);
+            
+            gc->SetPen(wxPen(*wxWHITE, 2));
+            wxGraphicsPath path = gc->CreatePath();
+            path.MoveToPoint(checkX + 5, checkY + checkSize/2);
+            path.AddLineToPoint(checkX + checkSize/2.5, checkY + checkSize - 6);
+            path.AddLineToPoint(checkX + checkSize - 4, checkY + 4);
+            gc->StrokePath(path);
+        }
+        
+        if (!m_icon.IsEmpty()) {
+            wxFont iconFont = GetFont().Bold().Scale(2.0);
+            gc->SetFont(iconFont, Theme::TextSelected);
+            double tw, th;
+            gc->GetTextExtent(m_icon, &tw, &th);
+            gc->DrawText(m_icon, x + (w - tw) / 2, y + 15);
+        }
+        
+        wxFont textFont = GetFont().Bold().Scale(1.3);
+        gc->SetFont(textFont, m_selected ? Theme::TextSelected : Theme::TextNormal);
+        double tw, th;
+        wxString displayText = TR(m_textKey);  // 使用翻译
+        gc->GetTextExtent(displayText, &tw, &th);
+        gc->DrawText(displayText, x + (w - tw) / 2, y + h - th - 15);
+        
+        delete gc;
+    }
+    
+    void OnClick(wxMouseEvent& evt)
+    {
+        wxCommandEvent event(wxEVT_TILE_CLICKED, GetId());
+        event.SetEventObject(this);
+        ProcessWindowEvent(event);
+        evt.Skip();
+    }
+    
+    void OnMouseEnter(wxMouseEvent& evt)
+    {
+        m_hover = true;
+        Refresh();
+        evt.Skip();
+    }
+    
+    void OnMouseLeave(wxMouseEvent& evt)
+    {
+        m_hover = false;
+        Refresh();
+        evt.Skip();
+    }
+};
+
+class TabBar : public wxPanel
+{
+public:
+    TabBar(wxWindow* parent) 
+        : wxPanel(parent, wxID_ANY)
+        , m_selectedIndex(0)
+    {
+        SetBackgroundColour(Theme::Background);
+        
+        wxGridSizer* sizer = new wxGridSizer(1, 5, 0, 10);
+
+        // 存储标签键
+        m_tabKeys = {"tab_source", "tab_picture", "tab_sound", "tab_channel", "tab_common"};
+        
+        for (int i = 0; i < 5; i++) {
+            wxButton* btn = new wxButton(this, 1000 + i, TR(m_tabKeys[i]), 
+                wxDefaultPosition, wxSize(120, 40));
+            btn->SetBackgroundColour(Theme::Background);
+            btn->SetForegroundColour(Theme::TextNormal);
+            btn->SetFont(GetFont().Bold().Scale(1.2));
+            
+            btn->Bind(wxEVT_BUTTON, [this, i](wxCommandEvent& evt) {
+                SelectTab(i);
+            });
+            
+            sizer->Add(btn, 0, wxALL, 5);
+            m_tabs.push_back(btn);
+        }
+        
+        SetSizer(sizer);
+        UpdateTabStyles();
+    }
+    
+    void SelectTab(int index)
+    {
+        if (index >= 0 && index < (int)m_tabs.size() && index != m_selectedIndex) {
+            m_selectedIndex = index;
+            UpdateTabStyles();
+            
+            wxCommandEvent evt(wxEVT_TAB_CHANGED, GetId());
+            evt.SetInt(index);
+            ProcessWindowEvent(evt);
+        }
+    }
+    
+    void UpdateLanguage() {
+        // 更新所有标签的文本
+        for (size_t i = 0; i < m_tabs.size(); i++) {
+            m_tabs[i]->SetLabel(TR(m_tabKeys[i]));
+        }
+        Layout();
+    }
+    
+    int GetSelectedIndex() const { return m_selectedIndex; }
+
+private:
+    std::vector<wxButton*> m_tabs;
+    std::vector<wxString> m_tabKeys;  // 存储文本键
+    int m_selectedIndex;
+    
+    void UpdateTabStyles()
+    {
+        for (size_t i = 0; i < m_tabs.size(); i++) {
+            if ((int)i == m_selectedIndex) {
+                m_tabs[i]->SetForegroundColour(Theme::TextSelected);
+            } else {
+                m_tabs[i]->SetForegroundColour(Theme::TextNormal);
+            }
+        }
+    }
+};
+
+
+class ContentPage : public wxPanel
+{
+public:
+    ContentPage(wxWindow* parent, const std::vector<wxString>& itemKeys)
+        : wxPanel(parent, wxID_ANY)
+    {
+        SetBackgroundColour(Theme::Background);
+        
+        // 使用 GridSizer，1行N列，和 TabBar 一样的对齐方式
+        int numItems = itemKeys.size();
+        wxGridSizer* sizer = new wxGridSizer(1, numItems, 0, 10);
+        
+        for (size_t i = 0; i < itemKeys.size(); i++) {
+            TileButton* tile = new TileButton(this, 2000 + i, itemKeys[i]);
+            
+            tile->Bind(wxEVT_TILE_CLICKED, [this, tile](wxCommandEvent& evt) {
+                OnTileClicked(tile);
+                evt.Skip();  // 让事件继续传播到 MyFrame
+            });
+            
+            sizer->Add(tile, 0, wxALL, 5);
+            m_tiles.push_back(tile);
+        }
+        
+        SetSizer(sizer);
+        
+        // 初始化选中状态：只选中第一个，其他全部取消选中
+        for (size_t i = 0; i < m_tiles.size(); i++) {
+            m_tiles[i]->SetSelected(i == 0);
+        }
+    }
+    
+    void UpdateLanguage() {
+        // 更新所有 TileButton 的语言
+        for (auto tile : m_tiles) {
+            tile->UpdateLanguage();
+        }
+    }
+
+private:
+    std::vector<TileButton*> m_tiles;
+    
+    void OnTileClicked(TileButton* clicked)
+    {
+        for (auto tile : m_tiles) {
+            tile->SetSelected(tile == clicked);
+        }
+    }
+};
 
 class MyFrame : public wxFrame
 {
 public:
-    MyFrame();
+    MyFrame() 
+        : wxFrame(nullptr, wxID_ANY, TR("window_title"), 
+                  wxDefaultPosition, wxSize(750, 200))
+        , m_menuVisible(true)
+        , m_currentPageIndex(0)
+        , m_currentTileIndex(0)
+    {
+        SetBackgroundColour(Theme::Background);
+        
+        // 主布局
+        wxBoxSizer* mainSizer = new wxBoxSizer(wxVERTICAL);
+        
+        // 1. 顶部 TabBar
+        m_tabBar = new TabBar(this);
+        mainSizer->Add(m_tabBar, 0, wxEXPAND | wxALL, 10);
+        
+        // 2. 内容区域
+        m_contentPanel = new wxPanel(this, wxID_ANY);
+        m_contentPanel->SetBackgroundColour(Theme::Background);
+        m_contentSizer = new wxBoxSizer(wxVERTICAL);
+        m_contentPanel->SetSizer(m_contentSizer);
+        mainSizer->Add(m_contentPanel, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+        
+        // 创建各个页面
+        CreatePages();
+        
+        // 显示第一个页面
+        ShowPage(0);
+        
+        // 绑定 Tab 切换事件
+        m_tabBar->Bind(wxEVT_TAB_CHANGED, 
+            [this](wxCommandEvent& evt) {
+                ShowPage(evt.GetInt());
+            });
+        
+        // 绑定所有页面的 Tile 点击事件
+        BindTileClickEvents();
+        
+        // 绑定键盘事件
+        Bind(wxEVT_CHAR_HOOK, &MyFrame::OnKeyDown, this);
+        
+        SetSizer(mainSizer);
+        Centre();
+    }
+
 private:
-    void OnHello(wxCommandEvent& event);
-    void OnExit(wxCommandEvent& event);
-    void OnAbout(wxCommandEvent& event);
+    TabBar* m_tabBar;
+    wxPanel* m_contentPanel;
+    wxBoxSizer* m_contentSizer;
+    std::vector<ContentPage*> m_pages;
+    
+    bool m_menuVisible;
+    int m_currentPageIndex;
+    int m_currentTileIndex;
+    
+    void CreatePages()
+    {
+        // Source 页 - 使用文本键
+        std::vector<wxString> sourceKeys = {
+            "source_dtv", "source_atv", "source_av", "source_hdmi1", "source_hdmi2"
+        };
+        m_pages.push_back(new ContentPage(m_contentPanel, sourceKeys));
+        
+        // Picture 页
+        std::vector<wxString> pictureKeys = {
+            "picture_standard", "picture_dynamic", "picture_movie", "picture_game"
+        };
+        m_pages.push_back(new ContentPage(m_contentPanel, pictureKeys));
+        
+        // Sound 页
+        std::vector<wxString> soundKeys = {
+            "sound_standard", "sound_music", "sound_movie", "sound_sports"
+        };
+        m_pages.push_back(new ContentPage(m_contentPanel, soundKeys));
+        
+        // Channel 页
+        std::vector<wxString> channelKeys = {
+            "channel_auto", "channel_manual", "channel_list"
+        };
+        m_pages.push_back(new ContentPage(m_contentPanel, channelKeys));
+        
+        // Common 页
+        std::vector<wxString> commonKeys = {
+            "common_language", "common_time", "common_network", "common_about"
+        };
+        m_pages.push_back(new ContentPage(m_contentPanel, commonKeys));
+        
+        // 初始隐藏所有页面
+        for (auto page : m_pages) {
+            page->Hide();
+        }
+    }
+    
+    void BindTileClickEvents() {
+        // 为所有页面的所有 TileButton 绑定点击事件到主窗口
+        for (size_t pageIdx = 0; pageIdx < m_pages.size(); pageIdx++) {
+            ContentPage* page = m_pages[pageIdx];
+            wxWindowList& children = page->GetChildren();
+            
+            for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
+                TileButton* tile = dynamic_cast<TileButton*>(*it);
+                if (tile) {
+                    // 绑定到主窗口的处理函数
+                    tile->Bind(wxEVT_TILE_CLICKED, &MyFrame::OnTileButtonClicked, this);
+                }
+            }
+        }
+    }
+    
+    void OnTileButtonClicked(wxCommandEvent& evt) {
+        // 获取被点击的按钮
+        TileButton* clickedTile = dynamic_cast<TileButton*>(evt.GetEventObject());
+        if (!clickedTile) return;
+        
+        // 检查是否是 Language 按钮
+        if (clickedTile->GetTextKey() == "common_language") {
+            // 切换语言
+            Language current = LanguageManager::Instance().GetLanguage();
+            Language next = (current == Language::English) ? Language::Chinese : Language::English;
+            LanguageManager::Instance().SetLanguage(next);
+            UpdateAllLanguages();
+        }
+        
+        // 其他按钮的处理可以在这里添加
+    }
+    
+    void UpdateAllLanguages() {
+        // 更新窗口标题
+        SetTitle(TR("window_title"));
+        
+        // 更新 TabBar
+        m_tabBar->UpdateLanguage();
+        
+        // 更新所有页面
+        for (auto page : m_pages) {
+            page->UpdateLanguage();
+        }
+        
+        Layout();
+        Refresh();
+    }
+    
+    void ShowPage(int index)
+    {
+        if (index < 0 || index >= (int)m_pages.size())
+            return;
+        
+        m_currentPageIndex = index;
+        m_currentTileIndex = 0;
+        
+        // 隐藏所有页面
+        for (auto page : m_pages) {
+            page->Hide();
+        }
+        
+        // 显示选中的页面
+        m_contentSizer->Clear();
+        m_contentSizer->Add(m_pages[index], 1, wxEXPAND);
+        m_pages[index]->Show();
+        
+        m_contentPanel->Layout();
+        
+        // 默认选中第一个 Tile，取消其他所有 Tile 的选中
+        wxWindowList& children = m_pages[index]->GetChildren();
+        bool isFirst = true;
+        for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
+            TileButton* tile = dynamic_cast<TileButton*>(*it);
+            if (tile) {
+                tile->SetSelected(isFirst);
+                isFirst = false;
+            }
+        }
+    }
+    
+    // 键盘事件处理
+    void OnKeyDown(wxKeyEvent& event)
+    {
+        int keyCode = event.GetKeyCode();
+        
+        switch(keyCode)
+        {
+            case 'M':
+            case WXK_ESCAPE:
+                ToggleMenu();
+                break;
+                
+            case WXK_LEFT:
+                if (m_menuVisible) {
+                    NavigateTile(-1);
+                }
+                break;
+                
+            case WXK_RIGHT:
+                if (m_menuVisible) {
+                    NavigateTile(1);
+                }
+                break;
+                
+            case WXK_UP:
+                if (m_menuVisible) {
+                    NavigateTab(-1);
+                }
+                break;
+                
+            case WXK_DOWN:
+                if (m_menuVisible) {
+                    NavigateTab(1);
+                }
+                break;
+                
+            case WXK_RETURN:
+            case WXK_NUMPAD_ENTER:
+                if (m_menuVisible) {
+                    OnConfirmKey();
+                }
+                break;
+                
+            case WXK_BACK:
+                if (m_menuVisible) {
+                    OnBackKey();
+                }
+                break;
+                
+            default:
+                event.Skip();
+                break;
+        }
+    }
+    
+    // 切换菜单显示/隐藏
+    void ToggleMenu()
+    {
+        m_menuVisible = !m_menuVisible;
+        
+        if (m_menuVisible) {
+            Show(true);
+            Raise();
+        } else {
+            Show(false);
+        }
+    }
+    
+    // 在 Tile 之间导航
+    void NavigateTile(int direction)
+    {
+        if (m_currentPageIndex < 0 || m_currentPageIndex >= (int)m_pages.size())
+            return;
+        
+        ContentPage* currentPage = m_pages[m_currentPageIndex];
+        wxWindowList& children = currentPage->GetChildren();
+        
+        std::vector<TileButton*> tiles;
+        for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
+            TileButton* tile = dynamic_cast<TileButton*>(*it);
+            if (tile) {
+                tiles.push_back(tile);
+            }
+        }
+        
+        if (tiles.empty()) return;
+        
+        // 取消当前选中
+        if (m_currentTileIndex >= 0 && m_currentTileIndex < (int)tiles.size()) {
+            tiles[m_currentTileIndex]->SetSelected(false);
+        }
+        
+        // 计算新的索引（循环）
+        m_currentTileIndex += direction;
+        if (m_currentTileIndex < 0) {
+            m_currentTileIndex = tiles.size() - 1;
+        } else if (m_currentTileIndex >= (int)tiles.size()) {
+            m_currentTileIndex = 0;
+        }
+        
+        // 选中新的 Tile
+        tiles[m_currentTileIndex]->SetSelected(true);
+    }
+    
+    // 在 Tab 之间导航
+    void NavigateTab(int direction)
+    {
+        int newIndex = m_currentPageIndex + direction;
+        
+        if (newIndex < 0) {
+            newIndex = m_pages.size() - 1;
+        } else if (newIndex >= (int)m_pages.size()) {
+            newIndex = 0;
+        }
+        
+        m_tabBar->SelectTab(newIndex);
+        ShowPage(newIndex);
+    }
+    
+    // 确认键处理
+    void OnConfirmKey()
+    {
+        if (m_currentPageIndex < 0 || m_currentPageIndex >= (int)m_pages.size())
+            return;
+        
+        ContentPage* currentPage = m_pages[m_currentPageIndex];
+        wxWindowList& children = currentPage->GetChildren();
+        
+        std::vector<TileButton*> tiles;
+        for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
+            TileButton* tile = dynamic_cast<TileButton*>(*it);
+            if (tile) {
+                tiles.push_back(tile);
+            }
+        }
+        
+        if (m_currentTileIndex >= 0 && m_currentTileIndex < (int)tiles.size()) {
+            TileButton* selectedTile = tiles[m_currentTileIndex];
+            
+            // 直接触发点击事件，让事件处理器统一处理
+            wxCommandEvent clickEvent(wxEVT_TILE_CLICKED, selectedTile->GetId());
+            clickEvent.SetEventObject(selectedTile);
+            selectedTile->GetEventHandler()->ProcessEvent(clickEvent);
+        }
+    }
+    
+    // 返回键处理
+    void OnBackKey()
+    {
+        ToggleMenu();
+    }
 };
 
-enum
+// ============================================
+// 7. MyApp - 应用程序
+// ============================================
+class MyApp : public wxApp
 {
-    ID_Hello = 1
+public:
+    virtual bool OnInit()
+    {
+        MyFrame* frame = new MyFrame();
+        frame->Show(true);
+        return true;
+    }
 };
 
 wxIMPLEMENT_APP(MyApp);
-
-bool MyApp::OnInit()
-{
-    MyFrame *frame = new MyFrame();
-    frame->Show(true);
-    return true;
-}
-
-MyFrame::MyFrame() : wxFrame(NULL, wxID_ANY, "Hello World")
-{
-    wxMenu *menuFile = new wxMenu;
-    menuFile->Append(ID_Hello, "&Hello...\tCtrl-H", "Help string shown in status bar for this menu item");
-    menuFile->AppendSeparator();
-    menuFile->Append(wxID_EXIT);
-
-    wxMenu *menuHelp = new wxMenu;
-    menuHelp->Append(wxID_ABOUT);
-
-    wxMenuBar *menuBar = new wxMenuBar;
-    menuBar->Append(menuFile, "&File");
-    menuBar->Append(menuHelp, "&Help");
-    SetMenuBar( menuBar );
-
-    CreateStatusBar();
-
-    SetStatusText("Welcome to wxWidgets!");
-
-    Bind(wxEVT_MENU, &MyFrame::OnHello, this, ID_Hello);
-    Bind(wxEVT_MENU, &MyFrame::OnAbout, this, wxID_ABOUT);
-    Bind(wxEVT_MENU, &MyFrame::OnExit, this, wxID_EXIT);
-}
-
-void MyFrame::OnExit(wxCommandEvent& event)
-{
-    Close(true);
-}
-
-void MyFrame::OnAbout(wxCommandEvent& event)
-{
-    wxMessageBox("This is a wxWidgets Hello World example", "About Hello World", wxOK | wxICON_INFORMATION);
-}
-
-void MyFrame::OnHello(wxCommandEvent& event)
-{
-    wxLogMessage("Hello world from wxWidgets!");
-}
