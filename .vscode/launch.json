@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Launch",
+            "name": "LaunchWxProject",
             "type": "cppdbg",
             "request": "launch",
             "linux": {
@@ -20,7 +20,7 @@
             "windows": {
                 "program": "${workspaceRoot}\\out\\myapp.exe",
                 "MIMode": "gdb",
-                "miDebuggerPath": "C:\\mingw-w64\\mingw64\\bin\\gdb.exe"
+                "miDebuggerPath": "C:\\mingw64\\bin\\gdb.exe"
             },  
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/out",

@@ -4,8 +4,8 @@
             "name": "Win32",
             "includePath": [
                 "${workspaceFolder}/src/**",
-                "${workspaceFolder}/dep/win/lib/gcc_lib/mswu",
-                "${workspaceFolder}/dep/win/include"
+                "${env:wxWidgetsRoot}\\include",
+                "${env:wxWidgetsRoot}\\lib\\gcc_lib\\mswu"
             ],
             "defines": [
                 "_WINDOWS",
@@ -14,7 +14,7 @@
                 "NDEBUG",
                 "NOPCH"
             ],
-            "compilerPath": "c:\\mingw-w64\\mingw64\\bin\\g++.exe",
+            "compilerPath": "C:\\mingw64\\bin\\g++.exe",
             "cStandard": "c11",
             "cppStandard": "gnu++14",
             "intelliSenseMode": "gcc-x86"

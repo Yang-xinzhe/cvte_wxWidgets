@@ -89,7 +89,7 @@
             "windows": {
                 "command": "g++",
                 "args": [
-                    "-L${workspaceFolder}\\dep\\win\\lib\\gcc_lib",
+                    "-L${env:wxWidgetsRoot}\\lib\\gcc_lib",
                     "-Lc:\\mingw-w64\\mingw64\\x86_64-w64-mingw32\\lib",
                     "-mwindows",
                     "-static",                                        
@@ -203,8 +203,8 @@
             "windows": {
                 "command": "g++",
                 "args": [
-                    "-I${workspaceFolder}\\dep\\win\\lib\\gcc_lib\\mswu",
-                    "-I${workspaceFolder}\\dep\\win\\include",                    
+                    "-I${env:wxWidgetsRoot}\\lib\\gcc_lib\\mswu",
+                    "-I${env:wxWidgetsRoot}\\include",                    
                     "-c",
                     "$(",
                     "dir",
