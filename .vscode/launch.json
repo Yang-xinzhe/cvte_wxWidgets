@@ -35,6 +35,60 @@
                 }
             ],
             "preLaunchTask": "Compile & Link"
+        },
+        {
+            "name": "Launch Menu App",
+            "type": "cppdbg",
+            "request": "launch",
+            "windows": {
+                "program": "${workspaceRoot}\\out\\menu.exe",
+                "MIMode": "gdb",
+                "miDebuggerPath": "C:\\mingw64\\bin\\gdb.exe"
+            },
+            "program": "${workspaceFolder}\\out\\menu.exe",
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/out",
+            "environment": [],
+            "externalConsole": false,
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "Build Menu App"
+        },
+        {
+            "name": "Launch Remote App",
+            "type": "cppdbg",
+            "request": "launch",
+            "windows": {
+                "program": "${workspaceRoot}\\out\\remote.exe",
+                "MIMode": "gdb",
+                "miDebuggerPath": "C:\\mingw64\\bin\\gdb.exe"
+            },
+            "program": "${workspaceFolder}\\out\\remote.exe",
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/out",
+            "environment": [],
+            "externalConsole": false,
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "Build Remote App"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Launch Both Apps",
+            "configurations": ["Launch Menu App", "Launch Remote App"],
+            "stopAll": true,
+            "preLaunchTask": "Build Both Apps"
         }
     ]
 }

@@ -98,6 +98,7 @@
                     "${workspaceFolder}\\out\\myapp.exe",
                     "-lwxmsw32u_core",
                     "-lwxbase32u",
+                    "-lws2_32",
                     "-lwxpng",
                     "-lcomdlg32",
                     "-lgdi32",
@@ -266,6 +267,121 @@
             "dependsOn": [                
                 "Compile"
             ]
+        },
+        {
+            "type": "shell",
+            "label": "Build Menu App",
+            "windows": {
+                "command": "g++",
+                "args": [
+                    "-I${env:wxWidgetsRoot}\\lib\\gcc_lib\\mswu",
+                    "-I${env:wxWidgetsRoot}\\include",
+                    "-L${env:wxWidgetsRoot}\\lib\\gcc_lib",
+                    "-Lc:\\mingw-w64\\mingw64\\x86_64-w64-mingw32\\lib",
+                    "-mwindows",
+                    "-static",
+                    "${workspaceFolder}\\src\\main.cpp",
+                    "-o",
+                    "${workspaceFolder}\\out\\menu.exe",
+                    "-g",
+                    "-Wall",
+                    "-D_WINDOWS",
+                    "-D_UNICODE",
+                    "-D__WXMSW__",
+                    "-DNDEBUG",
+                    "-DNOPCH",
+                    "-lwxmsw32u_core",
+                    "-lwxbase32u",
+                    "-lws2_32",
+                    "-lwxpng",
+                    "-lcomdlg32",
+                    "-lgdi32",
+                    "-lcomctl32",
+                    "-lole32",
+                    "-loleaut32",
+                    "-ldmoguids",
+                    "-luuid",
+                    "-lwinspool",
+                    "-lz",
+                    "-lwxregexu",
+                    "-lwxzlib",
+                    "-luxtheme",
+                    "-loleacc",
+                    "-lshlwapi",
+                    "-lversion"
+                ]
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "type": "shell",
+            "label": "Build Remote App",
+            "windows": {
+                "command": "g++",
+                "args": [
+                    "-I${env:wxWidgetsRoot}\\lib\\gcc_lib\\mswu",
+                    "-I${env:wxWidgetsRoot}\\include",
+                    "-L${env:wxWidgetsRoot}\\lib\\gcc_lib",
+                    "-Lc:\\mingw-w64\\mingw64\\x86_64-w64-mingw32\\lib",
+                    "-mwindows",
+                    "-static",
+                    "${workspaceFolder}\\src\\remote.cpp",
+                    "-o",
+                    "${workspaceFolder}\\out\\remote.exe",
+                    "-g",
+                    "-Wall",
+                    "-D_WINDOWS",
+                    "-D_UNICODE",
+                    "-D__WXMSW__",
+                    "-DNDEBUG",
+                    "-DNOPCH",
+                    "-lwxmsw32u_core",
+                    "-lwxbase32u",
+                    "-lws2_32",
+                    "-lwxpng",
+                    "-lcomdlg32",
+                    "-lgdi32",
+                    "-lcomctl32",
+                    "-lole32",
+                    "-loleaut32",
+                    "-ldmoguids",
+                    "-luuid",
+                    "-lwinspool",
+                    "-lz",
+                    "-lwxregexu",
+                    "-lwxzlib",
+                    "-luxtheme",
+                    "-loleacc",
+                    "-lshlwapi",
+                    "-lversion"
+                ]
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Build Both Apps",
+            "dependsOn": ["Build Menu App", "Build Remote App"],
+            "dependsOrder": "parallel",
+            "problemMatcher": []
+        },
+        {
+            "label": "Run Both Apps",
+            "type": "shell",
+            "windows": {
+                "command": "powershell",
+                "args": [
+                    "-Command",
+                    "Start-Process -FilePath '${workspaceFolder}\\out\\menu.exe'; Start-Process -FilePath '${workspaceFolder}\\out\\remote.exe'"
+                ]
+            },
+            "dependsOn": ["Build Both Apps"],
+            "problemMatcher": []
         }
     ]
 }
