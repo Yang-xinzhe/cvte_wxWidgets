@@ -7,6 +7,9 @@
 #include <wx/dcbuffer.h>
 #include <vector>
 #include <map>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+typedef int socklen_t;
 
 namespace Theme {
     const wxColour Background = wxColour(3, 54, 75);       
@@ -121,6 +124,9 @@ wxDEFINE_EVENT(wxEVT_TILE_CLICKED, wxCommandEvent);
 
 wxDECLARE_EVENT(wxEVT_TAB_CHANGED, wxCommandEvent);
 wxDEFINE_EVENT(wxEVT_TAB_CHANGED, wxCommandEvent);
+
+wxDECLARE_EVENT(wxEVT_SOCKET_CMD, wxCommandEvent);
+wxDEFINE_EVENT(wxEVT_SOCKET_CMD, wxCommandEvent);
 
 
 class TileButton : public wxPanel
@@ -377,6 +383,159 @@ private:
     }
 };
 
+// Socket Server 线程 - 接收遥控器命令
+class RemoteServerThread : public wxThread
+{
+public:
+    RemoteServerThread(wxEvtHandler* handler) 
+        : wxThread(wxTHREAD_DETACHED)
+        , m_handler(handler)
+        , m_serverSocket(INVALID_SOCKET)
+    {
+    }
+
+protected:
+    virtual ExitCode Entry() override
+    {
+        // 初始化 Winsock (Windows)
+#ifdef _WIN32
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            return (ExitCode)0;
+        }
+#endif
+
+        // 创建 socket
+        m_serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+        if (m_serverSocket == INVALID_SOCKET) {
+#ifdef _WIN32
+            WSACleanup();
+#endif
+            return (ExitCode)0;
+        }
+
+        // 设置地址重用
+        int opt = 1;
+        setsockopt(m_serverSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+
+        // 绑定端口
+        sockaddr_in addr = {0};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(5050);
+        addr.sin_addr.s_addr = INADDR_ANY;
+
+        if (bind(m_serverSocket, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+            closesocket(m_serverSocket);
+#ifdef _WIN32
+            WSACleanup();
+#endif
+            return (ExitCode)0;
+        }
+
+        // 监听
+        if (listen(m_serverSocket, 1) == SOCKET_ERROR) {
+            closesocket(m_serverSocket);
+#ifdef _WIN32
+            WSACleanup();
+#endif
+            return (ExitCode)0;
+        }
+
+        wxLogMessage(wxString::FromUTF8("遥控器服务已启动，监听端口 5050..."));
+
+        // 主循环：接受连接并处理
+        while (!TestDestroy()) {
+            // 使用 select 等待连接（带超时，避免阻塞太久）
+            fd_set readfds;
+            FD_ZERO(&readfds);
+            FD_SET(m_serverSocket, &readfds);
+            
+            timeval timeout;
+            timeout.tv_sec = 1;  // 1秒超时，定期检查 TestDestroy()
+            timeout.tv_usec = 0;
+            
+            int sel = select(0, &readfds, nullptr, nullptr, &timeout);
+            
+            // 超时或出错，继续循环
+            if (sel <= 0) {
+                continue;
+            }
+            
+            // 有新连接
+            sockaddr_in clientAddr;
+            socklen_t clientLen = sizeof(clientAddr);
+            SOCKET clientSocket = accept(m_serverSocket, (sockaddr*)&clientAddr, &clientLen);
+            
+            if (clientSocket == INVALID_SOCKET) {
+                continue;  // 接受失败，继续等待下一个
+            }
+
+            wxLogMessage(wxString::FromUTF8("遥控器已连接！"));
+
+            // 接收命令循环
+            char buffer[256];
+            while (!TestDestroy()) {
+                // 同样使用 select 检查是否有数据可读（带超时）
+                FD_ZERO(&readfds);
+                FD_SET(clientSocket, &readfds);
+                
+                timeout.tv_sec = 1;  // 1秒超时
+                timeout.tv_usec = 0;
+                
+                sel = select(0, &readfds, nullptr, nullptr, &timeout);
+                
+                if (sel < 0) {
+                    // 出错，断开
+                    wxLogMessage(wxString::FromUTF8("Socket 错误，断开连接"));
+                    break;
+                }
+                
+                if (sel == 0) {
+                    // 超时，继续循环（这样可以检查 TestDestroy()）
+                    continue;
+                }
+                
+                // 有数据可读
+                int n = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+                if (n <= 0) {
+                    // 连接关闭或出错
+                    if (n == 0) {
+                        wxLogMessage(wxString::FromUTF8("遥控器正常断开连接"));
+                    } else {
+                        wxLogMessage(wxString::FromUTF8("遥控器异常断开连接"));
+                    }
+                    break;
+                }
+                
+                buffer[n] = 0;
+                wxString cmd(buffer, wxConvUTF8);
+                cmd.Trim();
+
+                // 发送事件到主线程
+                wxCommandEvent* event = new wxCommandEvent(wxEVT_SOCKET_CMD, wxID_ANY);
+                event->SetString(cmd);
+                wxQueueEvent(m_handler, event);
+            }
+
+            closesocket(clientSocket);
+            wxLogMessage(wxString::FromUTF8("等待新的遥控器连接..."));
+        }
+
+        // 清理
+        if (m_serverSocket != INVALID_SOCKET) {
+            closesocket(m_serverSocket);
+        }
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        return (ExitCode)0;
+    }
+
+private:
+    wxEvtHandler* m_handler;
+    SOCKET m_serverSocket;
+};
+
 class MyFrame : public wxFrame
 {
 public:
@@ -421,8 +580,27 @@ public:
         // 绑定键盘事件
         Bind(wxEVT_CHAR_HOOK, &MyFrame::OnKeyDown, this);
         
+        // 绑定 socket 命令事件
+        Bind(wxEVT_SOCKET_CMD, &MyFrame::OnSocketCommand, this);
+        
+        // 启动 socket server 线程
+        m_serverThread = new RemoteServerThread(this);
+        if (m_serverThread->Run() != wxTHREAD_NO_ERROR) {
+            wxLogError(wxString::FromUTF8("无法启动遥控器服务线程"));
+            delete m_serverThread;
+            m_serverThread = nullptr;
+        }
+        
         SetSizer(mainSizer);
         Centre();
+    }
+    
+    ~MyFrame()
+    {
+        // 停止 socket server 线程
+        if (m_serverThread) {
+            m_serverThread->Delete();
+        }
     }
 
 private:
@@ -434,6 +612,8 @@ private:
     bool m_menuVisible;
     int m_currentPageIndex;
     int m_currentTileIndex;
+    
+    RemoteServerThread* m_serverThread;
     
     void CreatePages()
     {
@@ -704,6 +884,47 @@ private:
     void OnBackKey()
     {
         ToggleMenu();
+    }
+    
+    // Socket 命令处理
+    void OnSocketCommand(wxCommandEvent& event)
+    {
+        wxString cmd = event.GetString();
+        // wxLogMessage(wxString::Format(wxString::FromUTF8("收到遥控器命令: %s"), cmd));
+        
+        if (cmd == "KEY_MENU") {
+            ToggleMenu();
+        }
+        else if (cmd == "KEY_LEFT") {
+            if (m_menuVisible) {
+                NavigateTile(-1);
+            }
+        }
+        else if (cmd == "KEY_RIGHT") {
+            if (m_menuVisible) {
+                NavigateTile(1);
+            }
+        }
+        else if (cmd == "KEY_UP") {
+            if (m_menuVisible) {
+                NavigateTab(-1);
+            }
+        }
+        else if (cmd == "KEY_DOWN") {
+            if (m_menuVisible) {
+                NavigateTab(1);
+            }
+        }
+        else if (cmd == "KEY_OK") {
+            if (m_menuVisible) {
+                OnConfirmKey();
+            }
+        }
+        else if (cmd == "KEY_RETURN" || cmd == "KEY_BACK") {
+            if (m_menuVisible) {
+                OnBackKey();
+            }
+        }
     }
 };
 
