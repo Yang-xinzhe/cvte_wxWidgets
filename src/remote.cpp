@@ -328,7 +328,8 @@ private:
             btn->SetLabel(wxString::FromUTF8("断开连接"));
         }
         
-        wxLogMessage(wxString::FromUTF8("已连接到 TV Menu"));
+        // wxLogMessage(wxString::FromUTF8("已连接到 TV Menu"));
+        wxSafeYield(this);
     }
     
     void Disconnect()
