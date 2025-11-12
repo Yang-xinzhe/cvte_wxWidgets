@@ -5,6 +5,7 @@
 #endif
 #include <wx/graphics.h>
 #include <wx/dcbuffer.h>
+#include <wx/timer.h>
 #include <vector>
 #include <map>
 #include <winsock2.h>
@@ -111,6 +112,7 @@ private:
         
         // 窗口标题
         m_translations["window_title"] = {"TV Menu Demo", wxString::FromUTF8("电视菜单演示")};
+        m_translations["popup_switch_success"] = {"Switched to %s page.", wxString::FromUTF8("已切换到%s页面。")};
     }
     
     Language m_currentLanguage;
@@ -314,6 +316,16 @@ public:
     }
     
     int GetSelectedIndex() const { return m_selectedIndex; }
+    
+    int GetTabCount() const { return static_cast<int>(m_tabs.size()); }
+    
+    wxString GetTabKey(int index) const
+    {
+        if (index >= 0 && index < static_cast<int>(m_tabKeys.size())) {
+            return m_tabKeys[index];
+        }
+        return wxString();
+    }
 
 private:
     std::vector<wxButton*> m_tabs;
@@ -325,9 +337,12 @@ private:
         for (size_t i = 0; i < m_tabs.size(); i++) {
             if ((int)i == m_selectedIndex) {
                 m_tabs[i]->SetForegroundColour(Theme::TextSelected);
+                m_tabs[i]->SetBackgroundColour(Theme::Primary1);
             } else {
                 m_tabs[i]->SetForegroundColour(Theme::TextNormal);
+                m_tabs[i]->SetBackgroundColour(Theme::Background);
             }
+            m_tabs[i]->Refresh();
         }
     }
 };
@@ -371,6 +386,8 @@ public:
             tile->UpdateLanguage();
         }
     }
+    
+    const std::vector<TileButton*>& GetTiles() const { return m_tiles; }
 
 private:
     std::vector<TileButton*> m_tiles;
@@ -441,7 +458,7 @@ protected:
             return (ExitCode)0;
         }
 
-        wxLogMessage(wxString::FromUTF8("遥控器服务已启动，监听端口 5050..."));
+        // wxLogMessage(wxString::FromUTF8("遥控器服务已启动，监听端口 5050..."));
 
         // 主循环：接受连接并处理
         while (!TestDestroy()) {
@@ -470,7 +487,7 @@ protected:
                 continue;  // 接受失败，继续等待下一个
             }
 
-            wxLogMessage(wxString::FromUTF8("遥控器已连接！"));
+            // wxLogMessage(wxString::FromUTF8("遥控器已连接！"));
 
             // 接收命令循环
             char buffer[256];
@@ -545,6 +562,7 @@ public:
         , m_menuVisible(true)
         , m_currentPageIndex(0)
         , m_currentTileIndex(0)
+        , m_inTabSelectionMode(true)
     {
         SetBackgroundColour(Theme::Background);
         
@@ -566,13 +584,10 @@ public:
         CreatePages();
         
         // 显示第一个页面
-        ShowPage(0);
+        ShowPage(0, false);
         
         // 绑定 Tab 切换事件
-        m_tabBar->Bind(wxEVT_TAB_CHANGED, 
-            [this](wxCommandEvent& evt) {
-                ShowPage(evt.GetInt());
-            });
+        m_tabBar->Bind(wxEVT_TAB_CHANGED, &MyFrame::OnTabChanged, this);
         
         // 绑定所有页面的 Tile 点击事件
         BindTileClickEvents();
@@ -612,6 +627,7 @@ private:
     bool m_menuVisible;
     int m_currentPageIndex;
     int m_currentTileIndex;
+    bool m_inTabSelectionMode;
     
     RemoteServerThread* m_serverThread;
     
@@ -655,16 +671,10 @@ private:
     
     void BindTileClickEvents() {
         // 为所有页面的所有 TileButton 绑定点击事件到主窗口
-        for (size_t pageIdx = 0; pageIdx < m_pages.size(); pageIdx++) {
-            ContentPage* page = m_pages[pageIdx];
-            wxWindowList& children = page->GetChildren();
-            
-            for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
-                TileButton* tile = dynamic_cast<TileButton*>(*it);
-                if (tile) {
-                    // 绑定到主窗口的处理函数
-                    tile->Bind(wxEVT_TILE_CLICKED, &MyFrame::OnTileButtonClicked, this);
-                }
+        for (auto page : m_pages) {
+            const auto& tiles = page->GetTiles();
+            for (auto tile : tiles) {
+                tile->Bind(wxEVT_TILE_CLICKED, &MyFrame::OnTileButtonClicked, this);
             }
         }
     }
@@ -673,6 +683,21 @@ private:
         // 获取被点击的按钮
         TileButton* clickedTile = dynamic_cast<TileButton*>(evt.GetEventObject());
         if (!clickedTile) return;
+        
+        bool found = false;
+        for (size_t pageIdx = 0; pageIdx < m_pages.size() && !found; ++pageIdx) {
+            const auto& tiles = m_pages[pageIdx]->GetTiles();
+            for (size_t tileIdx = 0; tileIdx < tiles.size(); ++tileIdx) {
+                if (tiles[tileIdx] == clickedTile) {
+                    m_currentPageIndex = static_cast<int>(pageIdx);
+                    m_currentTileIndex = static_cast<int>(tileIdx);
+                    m_inTabSelectionMode = false;
+                    UpdateTileSelection();
+                    found = true;
+                    break;
+                }
+            }
+        }
         
         // 检查是否是 Language 按钮
         if (clickedTile->GetTextKey() == "common_language") {
@@ -702,7 +727,7 @@ private:
         Refresh();
     }
     
-    void ShowPage(int index)
+    void ShowPage(int index, bool showPopup)
     {
         if (index < 0 || index >= (int)m_pages.size())
             return;
@@ -722,16 +747,65 @@ private:
         
         m_contentPanel->Layout();
         
-        // 默认选中第一个 Tile，取消其他所有 Tile 的选中
-        wxWindowList& children = m_pages[index]->GetChildren();
-        bool isFirst = true;
-        for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
-            TileButton* tile = dynamic_cast<TileButton*>(*it);
-            if (tile) {
-                tile->SetSelected(isFirst);
-                isFirst = false;
-            }
+        UpdateTileSelection();
+        
+        if (showPopup) {
+            ShowTabSwitchPopup(index);
         }
+    }
+    
+    void UpdateTileSelection()
+    {
+        if (m_currentPageIndex < 0 || m_currentPageIndex >= (int)m_pages.size())
+            return;
+        
+        const auto& tiles = m_pages[m_currentPageIndex]->GetTiles();
+        if (tiles.empty())
+            return;
+        
+        if (m_currentTileIndex < 0) {
+            m_currentTileIndex = 0;
+        } else if (m_currentTileIndex >= static_cast<int>(tiles.size())) {
+            m_currentTileIndex = static_cast<int>(tiles.size()) - 1;
+        }
+        
+        bool highlightTiles = !m_inTabSelectionMode;
+        for (size_t i = 0; i < tiles.size(); ++i) {
+            bool shouldSelect = highlightTiles && static_cast<int>(i) == m_currentTileIndex;
+            tiles[i]->SetSelected(shouldSelect);
+        }
+    }
+    
+    void ShowTabSwitchPopup(int index)
+    {
+        wxString tabKey = m_tabBar->GetTabKey(index);
+        wxString tabLabel = tabKey.IsEmpty() ? wxString::Format("%d", index + 1) : TR(tabKey);
+        wxString message = wxString::Format(TR("popup_switch_success"), tabLabel);
+        
+        // 创建自动关闭的对话框
+        wxDialog* popup = new wxDialog(this, wxID_ANY, TR("window_title"), 
+                                       wxDefaultPosition, wxSize(300, 100),
+                                       wxCAPTION | wxSTAY_ON_TOP);
+        popup->SetBackgroundColour(Theme::Background);
+        
+        wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
+        
+        wxStaticText* text = new wxStaticText(popup, wxID_ANY, message);
+        text->SetForegroundColour(Theme::TextSelected);
+        text->SetFont(popup->GetFont().Bold().Scale(1.2));
+        
+        sizer->Add(text, 1, wxALL | wxALIGN_CENTER, 20);
+        popup->SetSizer(sizer);
+        popup->Centre();
+        
+        // 创建定时器，3秒后关闭
+        wxTimer* timer = new wxTimer(popup, wxID_ANY);
+        popup->Bind(wxEVT_TIMER, [popup](wxTimerEvent&) {
+            popup->Close();
+        });
+        timer->StartOnce(3000); // 3000 毫秒 = 3 秒
+        
+        popup->Show();
     }
     
     // 键盘事件处理
@@ -748,25 +822,25 @@ private:
                 
             case WXK_LEFT:
                 if (m_menuVisible) {
-                    NavigateTile(-1);
+                    HandleHorizontalNavigation(-1);
                 }
                 break;
                 
             case WXK_RIGHT:
                 if (m_menuVisible) {
-                    NavigateTile(1);
+                    HandleHorizontalNavigation(1);
                 }
                 break;
                 
             case WXK_UP:
                 if (m_menuVisible) {
-                    NavigateTab(-1);
+                    HandleHorizontalNavigation(-1);
                 }
                 break;
                 
             case WXK_DOWN:
                 if (m_menuVisible) {
-                    NavigateTab(1);
+                    HandleHorizontalNavigation(1);
                 }
                 break;
                 
@@ -789,12 +863,26 @@ private:
         }
     }
     
+    void HandleHorizontalNavigation(int direction)
+    {
+        if (direction == 0)
+            return;
+        
+        if (m_inTabSelectionMode) {
+            NavigateTab(direction);
+        } else {
+            NavigateTile(direction);
+        }
+    }
+    
     // 切换菜单显示/隐藏
     void ToggleMenu()
     {
         m_menuVisible = !m_menuVisible;
         
         if (m_menuVisible) {
+            m_inTabSelectionMode = true;
+            UpdateTileSelection();
             Show(true);
             Raise();
         } else {
@@ -802,88 +890,119 @@ private:
         }
     }
     
-    // 在 Tile 之间导航
-    void NavigateTile(int direction)
+    void EnterContentMode()
     {
         if (m_currentPageIndex < 0 || m_currentPageIndex >= (int)m_pages.size())
             return;
         
-        ContentPage* currentPage = m_pages[m_currentPageIndex];
-        wxWindowList& children = currentPage->GetChildren();
+        const auto& tiles = m_pages[m_currentPageIndex]->GetTiles();
+        if (tiles.empty())
+            return;
         
-        std::vector<TileButton*> tiles;
-        for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
-            TileButton* tile = dynamic_cast<TileButton*>(*it);
-            if (tile) {
-                tiles.push_back(tile);
-            }
-        }
+        m_currentTileIndex = 0;
         
-        if (tiles.empty()) return;
+        m_inTabSelectionMode = false;
+        UpdateTileSelection();
+    }
+    
+    void ActivateCurrentTile()
+    {
+        if (m_inTabSelectionMode)
+            return;
         
-        // 取消当前选中
-        if (m_currentTileIndex >= 0 && m_currentTileIndex < (int)tiles.size()) {
-            tiles[m_currentTileIndex]->SetSelected(false);
-        }
+        if (m_currentPageIndex < 0 || m_currentPageIndex >= (int)m_pages.size())
+            return;
         
-        // 计算新的索引（循环）
+        const auto& tiles = m_pages[m_currentPageIndex]->GetTiles();
+        if (tiles.empty())
+            return;
+        
+        if (m_currentTileIndex < 0 || m_currentTileIndex >= (int)tiles.size())
+            return;
+        
+        TileButton* selectedTile = tiles[m_currentTileIndex];
+        wxCommandEvent clickEvent(wxEVT_TILE_CLICKED, selectedTile->GetId());
+        clickEvent.SetEventObject(selectedTile);
+        selectedTile->GetEventHandler()->ProcessEvent(clickEvent);
+    }
+    
+    // 在 Tile 之间导航
+    void NavigateTile(int direction)
+    {
+        if (m_inTabSelectionMode)
+            return;
+        
+        if (m_currentPageIndex < 0 || m_currentPageIndex >= (int)m_pages.size())
+            return;
+        
+        const auto& tiles = m_pages[m_currentPageIndex]->GetTiles();
+        if (tiles.empty())
+            return;
+        
         m_currentTileIndex += direction;
         if (m_currentTileIndex < 0) {
-            m_currentTileIndex = tiles.size() - 1;
-        } else if (m_currentTileIndex >= (int)tiles.size()) {
+            m_currentTileIndex = static_cast<int>(tiles.size()) - 1;
+        } else if (m_currentTileIndex >= static_cast<int>(tiles.size())) {
             m_currentTileIndex = 0;
         }
         
-        // 选中新的 Tile
-        tiles[m_currentTileIndex]->SetSelected(true);
+        UpdateTileSelection();
     }
     
     // 在 Tab 之间导航
     void NavigateTab(int direction)
     {
+        if (m_pages.empty())
+            return;
+        
+        int tabCount = m_tabBar->GetTabCount();
+        if (tabCount == 0)
+            return;
+        
         int newIndex = m_currentPageIndex + direction;
         
         if (newIndex < 0) {
-            newIndex = m_pages.size() - 1;
-        } else if (newIndex >= (int)m_pages.size()) {
+            newIndex = tabCount - 1;
+        } else if (newIndex >= tabCount) {
             newIndex = 0;
         }
         
-        m_tabBar->SelectTab(newIndex);
-        ShowPage(newIndex);
+        if (newIndex != m_currentPageIndex) {
+            m_tabBar->SelectTab(newIndex);
+        }
     }
     
     // 确认键处理
     void OnConfirmKey()
     {
-        if (m_currentPageIndex < 0 || m_currentPageIndex >= (int)m_pages.size())
-            return;
-        
-        ContentPage* currentPage = m_pages[m_currentPageIndex];
-        wxWindowList& children = currentPage->GetChildren();
-        
-        std::vector<TileButton*> tiles;
-        for (wxWindowList::iterator it = children.begin(); it != children.end(); ++it) {
-            TileButton* tile = dynamic_cast<TileButton*>(*it);
-            if (tile) {
-                tiles.push_back(tile);
-            }
-        }
-        
-        if (m_currentTileIndex >= 0 && m_currentTileIndex < (int)tiles.size()) {
-            TileButton* selectedTile = tiles[m_currentTileIndex];
-            
-            // 直接触发点击事件，让事件处理器统一处理
-            wxCommandEvent clickEvent(wxEVT_TILE_CLICKED, selectedTile->GetId());
-            clickEvent.SetEventObject(selectedTile);
-            selectedTile->GetEventHandler()->ProcessEvent(clickEvent);
+        if (m_inTabSelectionMode) {
+            EnterContentMode();
+        } else {
+            ActivateCurrentTile();
         }
     }
     
     // 返回键处理
     void OnBackKey()
     {
-        ToggleMenu();
+        if (!m_inTabSelectionMode) {
+            m_inTabSelectionMode = true;
+            UpdateTileSelection();
+            return;
+        } else {
+            if (m_currentPageIndex != 0) {
+                m_tabBar->SelectTab(0);
+                return;
+            }
+            ToggleMenu();
+        }
+    }
+    
+    void OnTabChanged(wxCommandEvent& evt)
+    {
+        int index = evt.GetInt();
+        m_inTabSelectionMode = true;
+        ShowPage(index, true);
     }
     
     // Socket 命令处理
@@ -897,22 +1016,22 @@ private:
         }
         else if (cmd == "KEY_LEFT") {
             if (m_menuVisible) {
-                NavigateTile(-1);
+                HandleHorizontalNavigation(-1);
             }
         }
         else if (cmd == "KEY_RIGHT") {
             if (m_menuVisible) {
-                NavigateTile(1);
+                HandleHorizontalNavigation(1);
             }
         }
         else if (cmd == "KEY_UP") {
             if (m_menuVisible) {
-                NavigateTab(-1);
+                HandleHorizontalNavigation(-1);
             }
         }
         else if (cmd == "KEY_DOWN") {
             if (m_menuVisible) {
-                NavigateTab(1);
+                HandleHorizontalNavigation(1);
             }
         }
         else if (cmd == "KEY_OK") {
