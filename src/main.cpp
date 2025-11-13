@@ -9,6 +9,8 @@
 #include <map>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <wx/dcbuffer.h>
+#include <wx/image.h>
 typedef int socklen_t;
 
 namespace Theme {
@@ -606,10 +608,22 @@ private:
     SOCKET m_serverSocket;
 };
 
+class BackgroundFrame : public wxFrame
+{
+public:
+    BackgroundFrame(const wxSize& size)
+        : wxFrame(nullptr, wxID_ANY, wxEmptyString,
+                  wxDefaultPosition, size,
+                  wxFRAME_NO_TASKBAR | wxBORDER_NONE)
+    {
+        SetBackgroundColour(*wxBLACK);
+    }
+};
+
 class MyFrame : public wxFrame
 {
 public:
-    MyFrame() 
+    MyFrame(BackgroundFrame* backgroundFrame) 
         : wxFrame(nullptr, wxID_ANY, TR("window_title"), 
                   wxDefaultPosition, wxSize(750, 205))
         , m_menuVisible(true)
@@ -617,6 +631,7 @@ public:
         , m_pendingTabIndex(0)
         , m_currentTileIndex(0)
         , m_inTabSelectionMode(true)
+        , m_backgroundFrame(backgroundFrame)
     {
         SetBackgroundColour(Theme::Background);
         
@@ -651,6 +666,10 @@ public:
         
         // 绑定 socket 命令事件
         Bind(wxEVT_SOCKET_CMD, &MyFrame::OnSocketCommand, this);
+
+        Bind(wxEVT_MOVE, &MyFrame::OnMove, this);
+        Bind(wxEVT_SIZE, &MyFrame::OnSize, this);
+        Bind(wxEVT_CLOSE_WINDOW, &MyFrame::OnClose, this);
         
         // 启动 socket server 线程
         m_serverThread = new RemoteServerThread(this);
@@ -662,6 +681,8 @@ public:
         
         SetSizer(mainSizer);
         Centre();
+
+        UpdateBackgroundLayer();
     }
     
     ~MyFrame()
@@ -670,9 +691,50 @@ public:
         if (m_serverThread) {
             m_serverThread->Delete();
         }
+
+        if (m_backgroundFrame) {
+            m_backgroundFrame->Destroy();
+            m_backgroundFrame = nullptr;
+        }
     }
 
 private:
+    void UpdateBackgroundLayer()
+    {
+        if (!m_backgroundFrame) return;
+        if (!m_backgroundFrame->IsShown()) m_backgroundFrame->Show();
+
+        const int kBgExtra = 200;
+        wxSize menu = GetSize();
+        m_backgroundFrame->SetSize(wxSize(menu.GetWidth(), menu.GetHeight() + kBgExtra)); // 同宽更长
+        m_backgroundFrame->SetPosition(GetPosition()); // 左上对齐（需要居中可自行计算）
+
+        if (m_menuVisible) m_backgroundFrame->Lower();
+        else m_backgroundFrame->Raise();
+    }
+
+    void OnMove(wxMoveEvent& event)
+    {
+        UpdateBackgroundLayer();
+        event.Skip();
+    }
+
+    void OnSize(wxSizeEvent& event)
+    {
+        event.Skip();
+        UpdateBackgroundLayer();
+    }
+
+    void OnClose(wxCloseEvent& event)
+    {
+        if (m_backgroundFrame) {
+            m_backgroundFrame->Destroy();
+            m_backgroundFrame = nullptr;
+        }
+        event.Skip();
+    }
+
+    BackgroundFrame* m_backgroundFrame;
     TabBar* m_tabBar;
     wxPanel* m_contentPanel;
     wxBoxSizer* m_contentSizer;
@@ -980,9 +1042,11 @@ private:
             m_tabBar->SelectTab(m_pendingTabIndex, false);
             UpdateTileSelection();
             Show(true);
+            UpdateBackgroundLayer();
             Raise();
         } else {
             Show(false);
+            UpdateBackgroundLayer();
         }
     }
     
@@ -1163,8 +1227,13 @@ class MyApp : public wxApp
 public:
     virtual bool OnInit()
     {
-        MyFrame* frame = new MyFrame();
+        BackgroundFrame* background = new BackgroundFrame(wxSize(205, 1000));
+        background->Show();
+        background->Lower();
+
+        MyFrame* frame = new MyFrame(background);
         frame->Show(true);
+        frame->Raise();
         return true;
     }
 };
