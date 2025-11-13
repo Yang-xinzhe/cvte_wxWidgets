@@ -134,7 +134,8 @@ public:
     TileButton(wxWindow* parent, wxWindowID id, const wxString& textKey)
         : wxPanel(parent, id, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
         , m_textKey(textKey)
-        , m_selected(false)
+        , m_highlighted(false)
+        , m_checked(false)
         , m_hover(false)
     {
         SetBackgroundStyle(wxBG_STYLE_PAINT); 
@@ -153,10 +154,18 @@ public:
         Refresh();
     }
 
-    void SetSelected(bool selected) 
+    void SetHighlighted(bool highlighted) 
     { 
-        if (m_selected != selected) {
-            m_selected = selected;
+        if (m_highlighted != highlighted) {
+            m_highlighted = highlighted;
+            Refresh();
+        }
+    }
+
+    void SetChecked(bool checked)
+    {
+        if (m_checked != checked) {
+            m_checked = checked;
             Refresh();
         }
     }
@@ -165,14 +174,16 @@ public:
         Refresh();  // 重绘以显示新语言
     }
     
-    bool IsSelected() const { return m_selected; }
+    bool IsHighlighted() const { return m_highlighted; }
+    bool IsChecked() const { return m_checked; }
     wxString GetTextKey() const { return m_textKey; }
 
 private:
     wxString m_textKey;  // 存储文本键而不是直接文本
     wxString m_icon;
     wxBitmapBundle m_iconSvg;
-    bool m_selected;
+    bool m_highlighted;
+    bool m_checked;
     bool m_hover;
     
     void OnPaint(wxPaintEvent& evt)
@@ -194,7 +205,7 @@ private:
         double h = size.y - 2 * margin;
         double radius = 8;
         
-        if (m_selected) {
+        if (m_highlighted) {
             wxGraphicsGradientStops stops(Theme::Primary1, Theme::Primary2);
             wxGraphicsBrush brush = gc->CreateLinearGradientBrush(
                 x, y, x, y + h, stops);
@@ -208,7 +219,7 @@ private:
         gc->SetPen(*wxTRANSPARENT_PEN);
         gc->DrawRoundedRectangle(x, y, w, h, radius);
         
-        if (m_selected) {
+        if (m_checked) {
             double checkSize = 20;
             double checkX = x + w - checkSize - 8;
             double checkY = y + 8;
@@ -228,7 +239,7 @@ private:
         double textScale = hasIcon ? 1.0 : 1.3;
         wxFont textFont = GetFont().Bold().Scale(textScale);
         wxString displayText = TR(m_textKey);
-        gc->SetFont(textFont, m_selected ? Theme::TextSelected : Theme::TextNormal);
+        gc->SetFont(textFont, m_highlighted ? Theme::TextSelected : Theme::TextNormal);
         double tw, th;
         gc->GetTextExtent(displayText, &tw, &th);
 
@@ -265,7 +276,7 @@ private:
         }
         
         // 6. 绘制文本
-        gc->SetFont(textFont, m_selected ? Theme::TextSelected : Theme::TextNormal);
+        gc->SetFont(textFont, m_highlighted ? Theme::TextSelected : Theme::TextNormal);
         gc->DrawText(displayText, x + (w - tw) / 2, textY);
     }
     
@@ -325,15 +336,20 @@ public:
         UpdateTabStyles();
     }
     
-    void SelectTab(int index)
+    void SelectTab(int index, bool fireEvent = true)
     {
         if (index >= 0 && index < (int)m_tabs.size() && index != m_selectedIndex) {
             m_selectedIndex = index;
             UpdateTabStyles();
             
-            wxCommandEvent evt(wxEVT_TAB_CHANGED, GetId());
-            evt.SetInt(index);
-            ProcessWindowEvent(evt);
+            if (fireEvent) {
+                wxCommandEvent evt(wxEVT_TAB_CHANGED, GetId());
+                evt.SetInt(index);
+                ProcessWindowEvent(evt);
+            }
+        } else if (index >= 0 && index < (int)m_tabs.size() && !fireEvent) {
+            // 即使索引未变，当仅更新样式时也确保刷新
+            UpdateTabStyles();
         }
     }
     
@@ -415,10 +431,6 @@ public:
         
         SetSizer(sizer);
         
-        // 初始化选中状态：只选中第一个，其他全部取消选中
-        for (size_t i = 0; i < m_tiles.size(); i++) {
-            m_tiles[i]->SetSelected(i == 0);
-        }
     }
     
     void UpdateLanguage() {
@@ -436,7 +448,7 @@ private:
     void OnTileClicked(TileButton* clicked)
     {
         for (auto tile : m_tiles) {
-            tile->SetSelected(tile == clicked);
+            tile->SetHighlighted(tile == clicked);
         }
     }
 };
@@ -602,6 +614,7 @@ public:
                   wxDefaultPosition, wxSize(750, 205))
         , m_menuVisible(true)
         , m_currentPageIndex(0)
+        , m_pendingTabIndex(0)
         , m_currentTileIndex(0)
         , m_inTabSelectionMode(true)
     {
@@ -667,6 +680,7 @@ private:
     
     bool m_menuVisible;
     int m_currentPageIndex;
+    int m_pendingTabIndex;
     int m_currentTileIndex;
     bool m_inTabSelectionMode;
     
@@ -735,14 +749,18 @@ private:
         if (!clickedTile) return;
         
         bool found = false;
+        bool toggledOn = false;
         for (size_t pageIdx = 0; pageIdx < m_pages.size() && !found; ++pageIdx) {
             const auto& tiles = m_pages[pageIdx]->GetTiles();
             for (size_t tileIdx = 0; tileIdx < tiles.size(); ++tileIdx) {
                 if (tiles[tileIdx] == clickedTile) {
                     m_currentPageIndex = static_cast<int>(pageIdx);
                     m_currentTileIndex = static_cast<int>(tileIdx);
+                    m_pendingTabIndex = m_currentPageIndex;
                     m_inTabSelectionMode = false;
                     UpdateTileSelection();
+                    
+                    toggledOn = ToggleTileChecked(m_currentPageIndex, m_currentTileIndex);
                     found = true;
                     break;
                 }
@@ -750,12 +768,14 @@ private:
         }
         
         // 检查是否是 Language 按钮
-        if (clickedTile->GetTextKey() == "common_language_english") {
-            LanguageManager::Instance().SetLanguage(Language::English);
-            UpdateAllLanguages();
-        } else if (clickedTile->GetTextKey() == "common_language_chinese") {
-            LanguageManager::Instance().SetLanguage(Language::Chinese);
-            UpdateAllLanguages();
+        if (toggledOn) {
+            if (clickedTile->GetTextKey() == "common_language_english") {
+                LanguageManager::Instance().SetLanguage(Language::English);
+                UpdateAllLanguages();
+            } else if (clickedTile->GetTextKey() == "common_language_chinese") {
+                LanguageManager::Instance().SetLanguage(Language::Chinese);
+                UpdateAllLanguages();
+            }
         }
         
         // 其他按钮的处理可以在这里添加
@@ -822,8 +842,32 @@ private:
         bool highlightTiles = !m_inTabSelectionMode;
         for (size_t i = 0; i < tiles.size(); ++i) {
             bool shouldSelect = highlightTiles && static_cast<int>(i) == m_currentTileIndex;
-            tiles[i]->SetSelected(shouldSelect);
+            tiles[i]->SetHighlighted(shouldSelect);
         }
+    }
+
+    bool ToggleTileChecked(int pageIndex, int tileIndex)
+    {
+        if (pageIndex < 0 || pageIndex >= static_cast<int>(m_pages.size()))
+            return false;
+
+        const auto& tiles = m_pages[pageIndex]->GetTiles();
+        if (tileIndex < 0 || tileIndex >= static_cast<int>(tiles.size()))
+            return false;
+
+        TileButton* target = tiles[tileIndex];
+        if (!target)
+            return false;
+
+        if (target->IsChecked()) {
+            target->SetChecked(false);
+            return false;
+        }
+
+        for (size_t i = 0; i < tiles.size(); ++i) {
+            tiles[i]->SetChecked(static_cast<int>(i) == tileIndex);
+        }
+        return true;
     }
     
     void ShowTabSwitchPopup(int index)
@@ -932,6 +976,8 @@ private:
         
         if (m_menuVisible) {
             m_inTabSelectionMode = true;
+            m_pendingTabIndex = m_currentPageIndex;
+            m_tabBar->SelectTab(m_pendingTabIndex, false);
             UpdateTileSelection();
             Show(true);
             Raise();
@@ -1009,7 +1055,7 @@ private:
         if (tabCount == 0)
             return;
         
-        int newIndex = m_currentPageIndex + direction;
+        int newIndex = m_pendingTabIndex + direction;
         
         if (newIndex < 0) {
             newIndex = tabCount - 1;
@@ -1017,8 +1063,9 @@ private:
             newIndex = 0;
         }
         
-        if (newIndex != m_currentPageIndex) {
-            m_tabBar->SelectTab(newIndex);
+        if (newIndex != m_pendingTabIndex) {
+            m_pendingTabIndex = newIndex;
+            m_tabBar->SelectTab(newIndex, false);
         }
     }
     
@@ -1026,6 +1073,12 @@ private:
     void OnConfirmKey()
     {
         if (m_inTabSelectionMode) {
+            if (m_pendingTabIndex != m_currentPageIndex) {
+                ShowPage(m_pendingTabIndex, true);
+            }
+            m_currentPageIndex = m_pendingTabIndex;
+            m_tabBar->SelectTab(m_currentPageIndex, false);
+            m_pendingTabIndex = m_currentPageIndex;
             EnterContentMode();
         } else {
             ActivateCurrentTile();
@@ -1037,11 +1090,14 @@ private:
     {
         if (!m_inTabSelectionMode) {
             m_inTabSelectionMode = true;
+            m_pendingTabIndex = m_currentPageIndex;
+            m_tabBar->SelectTab(m_pendingTabIndex, false);
             UpdateTileSelection();
             return;
         } else {
-            if (m_currentPageIndex != 0) {
-                m_tabBar->SelectTab(0);
+            if (m_pendingTabIndex != 0) {
+                m_pendingTabIndex = 0;
+                m_tabBar->SelectTab(m_pendingTabIndex, false);
                 return;
             }
             ToggleMenu();
@@ -1052,7 +1108,9 @@ private:
     {
         int index = evt.GetInt();
         m_inTabSelectionMode = true;
+        m_pendingTabIndex = index;
         ShowPage(index, true);
+        m_pendingTabIndex = m_currentPageIndex;
     }
     
     // Socket 命令处理
