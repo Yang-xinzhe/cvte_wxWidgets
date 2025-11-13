@@ -1,4 +1,3 @@
-// 现代 TV 菜单风格的 wxWidgets 界面
 #include <wx/wxprec.h>
 #ifndef WX_PRECOMP
     #include <wx/wx.h>
@@ -105,10 +104,8 @@ private:
         m_translations["channel_list"] = {"Channel List", wxString::FromUTF8("频道列表")};
         
         // Common 页面
-        m_translations["common_language"] = {"Language", wxString::FromUTF8("语言")};
-        m_translations["common_time"] = {"Time", wxString::FromUTF8("时间")};
-        m_translations["common_network"] = {"Network", wxString::FromUTF8("网络")};
-        m_translations["common_about"] = {"About", wxString::FromUTF8("关于")};
+        m_translations["common_language_english"] = {"English", wxString::FromUTF8("英语")};
+        m_translations["common_language_chinese"] = {"Chinese", wxString::FromUTF8("中文")};
         
         // 窗口标题
         m_translations["window_title"] = {"TV Menu Demo", wxString::FromUTF8("电视菜单演示")};
@@ -141,8 +138,8 @@ public:
         , m_hover(false)
     {
         SetBackgroundStyle(wxBG_STYLE_PAINT); 
-        SetMinSize(wxSize(150, 60));
-        SetMaxSize(wxSize(150, 60));
+        // SetMinSize(wxSize(150, 60));
+        // SetMaxSize(wxSize(150, 90));
         
         // 绑定事件
         Bind(wxEVT_PAINT, &TileButton::OnPaint, this);
@@ -151,6 +148,11 @@ public:
         Bind(wxEVT_LEAVE_WINDOW, &TileButton::OnMouseLeave, this);
     }
     
+    void SetIconSvg(const wxBitmapBundle& bundle) {
+        m_iconSvg = bundle;
+        Refresh();
+    }
+
     void SetSelected(bool selected) 
     { 
         if (m_selected != selected) {
@@ -169,6 +171,7 @@ public:
 private:
     wxString m_textKey;  // 存储文本键而不是直接文本
     wxString m_icon;
+    wxBitmapBundle m_iconSvg;
     bool m_selected;
     bool m_hover;
     
@@ -220,23 +223,50 @@ private:
             path.AddLineToPoint(checkX + checkSize - 4, checkY + 4);
             gc->StrokePath(path);
         }
-        
-        if (!m_icon.IsEmpty()) {
-            wxFont iconFont = GetFont().Bold().Scale(2.0);
-            gc->SetFont(iconFont, Theme::TextSelected);
-            double tw, th;
-            gc->GetTextExtent(m_icon, &tw, &th);
-            gc->DrawText(m_icon, x + (w - tw) / 2, y + 15);
-        }
-        
-        wxFont textFont = GetFont().Bold().Scale(1.3);
+
+        const bool hasIcon = m_iconSvg.IsOk() || !m_icon.IsEmpty();
+        double textScale = hasIcon ? 1.0 : 1.3;
+        wxFont textFont = GetFont().Bold().Scale(textScale);
+        wxString displayText = TR(m_textKey);
         gc->SetFont(textFont, m_selected ? Theme::TextSelected : Theme::TextNormal);
         double tw, th;
-        wxString displayText = TR(m_textKey);  // 使用翻译
         gc->GetTextExtent(displayText, &tw, &th);
-        gc->DrawText(displayText, x + (w - tw) / 2, y + h - th - 15);
+
+        int topPad     = hasIcon ? 8  : 12;
+        int bottomPad  = hasIcon ? 10 : 15;
+        int minSpacing = hasIcon ? 6  : 10;
         
-        delete gc;
+        // 3. 计算文本位置（固定贴底）
+        int textY = static_cast<int>(y + h - th - bottomPad);
+        
+        // 4. 计算图标可用空间和实际高度
+        int iconTopY = static_cast<int>(y + topPad);
+        int availableSpace = textY - iconTopY - minSpacing;  // 减去最小间距
+        const double iconFraction = hasIcon ? 0.82 : 0.0;
+        int desiredIconH = static_cast<int>(h * iconFraction);
+        int maxIconH = wxMax(0, wxMin(desiredIconH, availableSpace));
+        int minIconH = 18;
+        int iconH = (maxIconH >= minIconH) ? maxIconH : wxMax(0, maxIconH);
+        int iconW = iconH;
+        int iconX = static_cast<int>(x + (w - iconW) / 2);
+        
+        // 5. 绘制图标（如果有足够空间）
+        if (hasIcon && iconH > 0) {
+            if (m_iconSvg.IsOk()) {
+                wxBitmap bmp = m_iconSvg.GetBitmap(wxSize(iconW, iconH));
+                if (bmp.IsOk()) gc->DrawBitmap(bmp, iconX, iconTopY, iconW, iconH);
+            } else {
+                wxFont iconFont = GetFont().Bold().Scale(2.0);
+                gc->SetFont(iconFont, Theme::TextSelected);
+                double itw, ith;
+                gc->GetTextExtent(m_icon, &itw, &ith);
+                gc->DrawText(m_icon, x + (w - itw) / 2, iconTopY);
+            }
+        }
+        
+        // 6. 绘制文本
+        gc->SetFont(textFont, m_selected ? Theme::TextSelected : Theme::TextNormal);
+        gc->DrawText(displayText, x + (w - tw) / 2, textY);
     }
     
     void OnClick(wxMouseEvent& evt)
@@ -351,7 +381,7 @@ private:
 class ContentPage : public wxPanel
 {
 public:
-    ContentPage(wxWindow* parent, const std::vector<wxString>& itemKeys)
+    ContentPage(wxWindow* parent, const std::vector<wxString>& itemKeys, const std::vector<wxString>& iconSvgPaths = {}, const wxSize& tileSize = wxSize(150, 60))
         : wxPanel(parent, wxID_ANY)
     {
         SetBackgroundColour(Theme::Background);
@@ -363,6 +393,17 @@ public:
         for (size_t i = 0; i < itemKeys.size(); i++) {
             TileButton* tile = new TileButton(this, 2000 + i, itemKeys[i]);
             
+            tile->SetMinSize(tileSize);
+            tile->SetMaxSize(tileSize);
+            tile->SetInitialSize(tileSize);
+
+            if(!iconSvgPaths.empty() && i < iconSvgPaths.size()) {
+                const wxString& svg = iconSvgPaths[i];
+                if(!svg.IsEmpty()) {
+                    tile->SetIconSvg(wxBitmapBundle::FromSVGFile(svg, wxSize(1024, 1024)));
+                }
+            }
+
             tile->Bind(wxEVT_TILE_CLICKED, [this, tile](wxCommandEvent& evt) {
                 OnTileClicked(tile);
                 evt.Skip();  // 让事件继续传播到 MyFrame
@@ -558,7 +599,7 @@ class MyFrame : public wxFrame
 public:
     MyFrame() 
         : wxFrame(nullptr, wxID_ANY, TR("window_title"), 
-                  wxDefaultPosition, wxSize(750, 200))
+                  wxDefaultPosition, wxSize(750, 205))
         , m_menuVisible(true)
         , m_currentPageIndex(0)
         , m_currentTileIndex(0)
@@ -637,7 +678,16 @@ private:
         std::vector<wxString> sourceKeys = {
             "source_dtv", "source_atv", "source_av", "source_hdmi1", "source_hdmi2"
         };
-        m_pages.push_back(new ContentPage(m_contentPanel, sourceKeys));
+
+        std::vector<wxString> sourceIcons = {
+            "C:\\wxwidgets-vscode\\icon\\tv.svg",
+            "C:\\wxwidgets-vscode\\icon\\tv.svg",
+            "C:\\wxwidgets-vscode\\icon\\channel.svg",
+            "C:\\wxwidgets-vscode\\icon\\hdmi.svg",
+            "C:\\wxwidgets-vscode\\icon\\hdmi.svg"
+        };
+
+        m_pages.push_back(new ContentPage(m_contentPanel, sourceKeys, sourceIcons, wxSize(150, 90)));
         
         // Picture 页
         std::vector<wxString> pictureKeys = {
@@ -659,7 +709,7 @@ private:
         
         // Common 页
         std::vector<wxString> commonKeys = {
-            "common_language", "common_time", "common_network", "common_about"
+            "common_language_english", "common_language_chinese"
         };
         m_pages.push_back(new ContentPage(m_contentPanel, commonKeys));
         
@@ -700,11 +750,11 @@ private:
         }
         
         // 检查是否是 Language 按钮
-        if (clickedTile->GetTextKey() == "common_language") {
-            // 切换语言
-            Language current = LanguageManager::Instance().GetLanguage();
-            Language next = (current == Language::English) ? Language::Chinese : Language::English;
-            LanguageManager::Instance().SetLanguage(next);
+        if (clickedTile->GetTextKey() == "common_language_english") {
+            LanguageManager::Instance().SetLanguage(Language::English);
+            UpdateAllLanguages();
+        } else if (clickedTile->GetTextKey() == "common_language_chinese") {
+            LanguageManager::Instance().SetLanguage(Language::Chinese);
             UpdateAllLanguages();
         }
         
